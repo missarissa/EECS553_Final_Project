@@ -2,7 +2,6 @@ import mne
 import numpy as np
 import torch
 import torch.nn as nn
-import torchaudio
 from torch.utils.data import Dataset, DataLoader
 from scipy import signal
 import tensorly as tl
@@ -35,10 +34,10 @@ HOP_LENGTH = 128
 RANK = 15
 IMG_SIZE = 224
 PATCH_SIZE = 16
-BATCH_SIZE = 4
-EPOCHS = 30
-LEARNING_RATE = 0.001
-WEIGHT_DECAY = 0.0005
+BATCH_SIZE = 8
+EPOCHS = 10
+LEARNING_RATE = 0.0003
+WEIGHT_DECAY = 0.001
 
 # CHB-MIT dataset path
 DATA_PATH = './chbmit/'
@@ -58,7 +57,7 @@ class CHBMITDataset(Dataset):
         patient_dir = os.path.join(self.data_path, f'chb{self.patient_id:02d}')
         if not os.path.exists(patient_dir):
             raise FileNotFoundError(f"Patient directory {patient_dir} not found.")
-        edf_files = ['chb21_19.edf', 'chb21_20.edf', 'chb21_21.edf', 'chb21_22.edf']
+        edf_files = ['chb21_19.edf']
         edf_files = [f for f in edf_files if os.path.exists(os.path.join(patient_dir, f))]
         if not edf_files:
             raise FileNotFoundError(f"No valid .edf files found in {patient_dir}.")
@@ -78,13 +77,19 @@ class CHBMITDataset(Dataset):
                     'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8'
                 ]
                 raw = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
+                print(f"Raw channels in {edf_file}: {raw.ch_names}")
                 seen = set()
                 channels_to_keep = []
                 for ch in raw.ch_names:
-                    if ch in valid_channels and ch not in seen:
+                    base_ch = ch.strip()
+                    if base_ch in valid_channels and base_ch not in seen:
                         channels_to_keep.append(ch)
-                        seen.add(ch)
-                raw.pick_channels(channels_to_keep)
+                        seen.add(base_ch)
+                print(f"Selected {len(channels_to_keep)} channels: {channels_to_keep}")
+                if not channels_to_keep:
+                    print(f"No valid channels found in {file_path}. Available channels: {raw.ch_names}")
+                    continue
+                raw.pick(channels_to_keep, verbose=False)
             except Exception as e:
                 print(f"Error reading {file_path}: {e}")
                 continue
@@ -103,9 +108,11 @@ class CHBMITDataset(Dataset):
                 segment_time = start / self.sample_rate
                 label = self._label_segment(segment_time, seizure_times)
                 if label is not None:
-                    print(f"File {edf_file}, Label {label} at {segment_time:.0f}s, seizure times: {seizure_times}")
                     self.segments.append(segment)
                     self.labels.append(label)
+                    # Print first 10 and last 10 segments for debugging
+                    if len(self.segments) <= 10 or len(self.segments) > len(self.segments) - 10:
+                        print(f"File {edf_file}, Label {label} at {segment_time:.0f}s, seizure times: {seizure_times}")
 
     def _parse_seizure_times(self, annot_file):
         seizure_times_dict = {}
@@ -149,9 +156,10 @@ class CHBMITDataset(Dataset):
             pre_ictal_start = seizure_time - 70 * 60
             pre_ictal_end = seizure_time - 10 * 60
             seizure_end = seizure_time + 60
-            if (segment_time <= pre_ictal_end and segment_end >= pre_ictal_start):
+            if pre_ictal_start <= segment_time < pre_ictal_end or \
+               (segment_end > pre_ictal_start and segment_time < pre_ictal_end):
                 return 1
-            if (segment_time <= seizure_end and segment_end >= seizure_time):
+            if segment_time < seizure_end and segment_end > seizure_time:
                 return None
         return 0
 
@@ -213,34 +221,34 @@ def train_vit_model(train_loader, val_loader, num_classes=2):
         image_size=IMG_SIZE,
         patch_size=PATCH_SIZE,
         num_classes=num_classes,
-        dim=512,
-        depth=6,
-        heads=8,
-        mlp_dim=1024,
-        dropout=0.1,
-        emb_dropout=0.1
+        dim=128,
+        depth=2,
+        heads=2,
+        mlp_dim=256,
+        dropout=0.2,
+        emb_dropout=0.2
     ).to(device)
 
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
+    best_val_loss = float('inf')
+    patience = 3
+    counter = 0
 
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0
-        try:
-            for batch in tqdm(train_loader, desc=f'Epoch {epoch+1}/{EPOCHS}'):
-                images, labels = batch
-                images, labels = images.to(device), labels.to(device)
-                optimizer.zero_grad()
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
-                train_loss += loss.item()
-        except Exception as e:
-            print(f"Error during training at epoch {epoch+1}: {e}")
-            raise
+        for batch in tqdm(train_loader, desc=f'Epoch {epoch+1}/{EPOCHS}'):
+            images, labels = batch
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
 
         model.eval()
         val_preds, val_labels = [], []
@@ -256,18 +264,26 @@ def train_vit_model(train_loader, val_loader, num_classes=2):
                 val_preds.extend(preds.cpu().numpy())
                 val_labels.extend(labels.cpu().numpy())
 
+        val_loss = val_loss / len(val_loader)
         accuracy = accuracy_score(val_labels, val_preds)
         recall = recall_score(val_labels, val_preds, average='binary', zero_division=0)
         precision = precision_score(val_labels, val_preds, average='binary', zero_division=0)
-        try:
-            auc = roc_auc_score(val_labels, val_preds)
-        except ValueError:
-            auc = float('nan')
+        auc = roc_auc_score(val_labels, val_preds) if len(set(val_labels)) > 1 else float('nan')
 
         print(f'Epoch {epoch+1}: Train Loss: {train_loss/len(train_loader):.4f}, '
-              f'Val Loss: {val_loss/len(val_loader):.4f}, '
+              f'Val Loss: {val_loss:.4f}, '
               f'Accuracy: {accuracy:.4f}, Recall: {recall:.4f}, '
               f'Precision: {precision:.4f}, AUC: {auc:.4f}')
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            counter = 0
+        else:
+            counter += 1
+
+        # if counter >= patience:
+        #     print(f"Early stopping at epoch {epoch+1}")
+        #     break
 
         scheduler.step()
 
@@ -286,8 +302,10 @@ def main():
     global class_weights
     pre_ictal_count = sum(1 for l in labels if l == 1)
     interictal_count = sum(1 for l in labels if l == 0)
+    if pre_ictal_count == 0 or interictal_count == 0:
+        raise ValueError("No valid segments found for one or both classes. Check data loading and labeling.")
     total = pre_ictal_count + interictal_count
-    class_weights = torch.tensor([interictal_count/total, pre_ictal_count/total]).to(device)
+    class_weights = torch.tensor([total/(2*interictal_count), total/(2*pre_ictal_count)]).to(device)
     print(f"Class weights: {class_weights.tolist()}")
 
     super_slices = apply_tensor_decomposition(segments, rank=RANK)
@@ -331,10 +349,7 @@ def main():
     accuracy = accuracy_score(test_labels, test_preds)
     recall = recall_score(test_labels, test_preds, average='binary', zero_division=0)
     precision = precision_score(test_labels, test_preds, average='binary', zero_division=0)
-    try:
-        auc = roc_auc_score(test_labels, test_preds)
-    except ValueError:
-        auc = float('nan')
+    auc = roc_auc_score(test_labels, test_preds) if len(set(test_labels)) > 1 else float('nan')
 
     print(f'Test Results: Accuracy: {accuracy:.4f}, Recall: {recall:.4f}, '
           f'Precision: {precision:.4f}, AUC: {auc:.4f}')
