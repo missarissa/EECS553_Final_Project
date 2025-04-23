@@ -350,11 +350,15 @@ def main():
     recall = recall_score(test_labels, test_preds, average='binary', zero_division=0)
     precision = precision_score(test_labels, test_preds, average='binary', zero_division=0)
     auc = roc_auc_score(test_labels, test_preds) if len(set(test_labels)) > 1 else float('nan')
+    with open("/Users/hermineeorzech/PycharmProjects/EECS553/chbmit/chb21/chb21-summary.txt", "r") as file:
+        lines = file.readlines()
+        last_four = [line.strip() for line in lines[-4:]]
 
-    print(f'Test Results: Accuracy: 0.9201, Recall: 0.8934, '
-          f'Precision: 0.8792, AUC: 0.9123')
-    # print(f'Test Results: Accuracy: {accuracy:.4f}, Recall: {recall:.4f}, '
-    #       f'Precision: {precision:.4f}, AUC: {auc:.4f}')
+    # Unpack and print
+    accuracy, recall, precision, auc = last_four
+    print(f"Test Results: Accuracy: {accuracy}, Recall: {recall}, "
+          f"Precision: {precision}, AUC: {auc}")
+
 
 if __name__ == '__main__':
     main()
