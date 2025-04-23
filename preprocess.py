@@ -2,6 +2,10 @@ import mne
 import numpy as np
 import os
 import re
+import torch
+import tensorly as tl
+from tensorly.decomposition import parafac
+from tensorly.tenalg import mode_dot
 
 # 30 second chunks
 
@@ -31,6 +35,19 @@ def segment_eeg(raw, segment_length=30, stepsize = 15, fs=256):
         start += n_samples_step
 
     return np.array(segments)
+
+def tensor_decomp(X):
+    tl.set_backend('pytorch')
+    factors = parafac(X, rank = 3)
+
+    A, B, C = factors.factors
+
+    X_approx = tl.kruskal_to_tensor(factors)
+
+    P = torch.linalg.pinv(C)
+    X_reduced = mode_dot(X, P, mode=2) 
+
+    return X_reduced.shape
 
 # def label_segments(segments, raw, annotations, segment_length=30, fs=256):
 #     n_samples = int(segment_length * fs)
