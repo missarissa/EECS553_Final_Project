@@ -47,7 +47,7 @@ def tensor_decomp(X):
     P = torch.linalg.pinv(C)
     X_reduced = mode_dot(X, P, mode=2) 
 
-    return X_reduced.shape
+    return X_reduced
 
 # def label_segments(segments, raw, annotations, segment_length=30, fs=256):
 #     n_samples = int(segment_length * fs)
