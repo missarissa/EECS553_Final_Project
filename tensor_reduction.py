@@ -7,8 +7,9 @@ from src.tf_methods import generate_tf_rep
 
 tl.set_backend('pytorch')
 
-
+#this does the whole ed file so (3841, 241, 23) -> (3841, 241, 10)
 def generate_segment_tensor(segment, method='SPEC', fs=256):
+
     # generate 3D tensor (T,F,K (number of channels))
     tf_slices = []
     for signal in segment:
@@ -24,7 +25,6 @@ def tensor_decomp(X, rank=10):
     X_reduced = mode_dot(X, P, mode=2)
 
     return X_reduced
-
 
 def process_all_segments(segments, method='SPEC', fs=256, rank=10):
     # converts all segments to reduced tensors of shape (T,F,R)
