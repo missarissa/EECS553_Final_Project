@@ -57,7 +57,8 @@ class CHBMITDataset(Dataset):
         patient_dir = os.path.join(self.data_path, f'chb{self.patient_id:02d}')
         if not os.path.exists(patient_dir):
             raise FileNotFoundError(f"Patient directory {patient_dir} not found.")
-        edf_files = ['chb21_19.edf']
+        # Generate list of EDF files from chb21_01.edf to chb21_23.edf
+        edf_files = [f'chb21_{i:02d}.edf' for i in range(17, 24)]
         edf_files = [f for f in edf_files if os.path.exists(os.path.join(patient_dir, f))]
         if not edf_files:
             raise FileNotFoundError(f"No valid .edf files found in {patient_dir}.")
@@ -111,8 +112,8 @@ class CHBMITDataset(Dataset):
                     self.segments.append(segment)
                     self.labels.append(label)
                     # Print first 10 and last 10 segments for debugging
-                    if len(self.segments) <= 10 or len(self.segments) > len(self.segments) - 10:
-                        print(f"File {edf_file}, Label {label} at {segment_time:.0f}s, seizure times: {seizure_times}")
+                    # if len(self.segments) <= 3 or len(self.segments) > len(self.segments) - 3:
+                    #     print(f"File {edf_file}, Label {label} at {segment_time:.0f}s, seizure times: {seizure_times}")
 
     def _parse_seizure_times(self, annot_file):
         seizure_times_dict = {}
@@ -350,15 +351,8 @@ def main():
     recall = recall_score(test_labels, test_preds, average='binary', zero_division=0)
     precision = precision_score(test_labels, test_preds, average='binary', zero_division=0)
     auc = roc_auc_score(test_labels, test_preds) if len(set(test_labels)) > 1 else float('nan')
-    with open("/Users/hermineeorzech/PycharmProjects/EECS553/chbmit/chb21/chb21-summary.txt", "r") as file:
-        lines = file.readlines()
-        last_four = [line.strip() for line in lines[-4:]]
-
-    # Unpack and print
-    accuracy, recall, precision, auc = last_four
-    print(f"Test Results: Accuracy: {accuracy}, Recall: {recall}, "
-          f"Precision: {precision}, AUC: {auc}")
-
+    print(f'Test Results: Accuracy: {accuracy:.4f}, Recall: {recall:.4f}, '
+           f'Precision: {precision:.4f}, AUC: {auc:.4f}')
 
 if __name__ == '__main__':
     main()
